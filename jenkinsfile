@@ -1,0 +1,75 @@
+pipeline {
+    agent any
+    tools {
+             terraform 'terraform'
+    }
+
+    environment {
+        registry= "queeki/dockerhubrepo"
+        AWS_ACCESS_KEY_ID = credentials('AWS_ACCESS_KEY')
+        AWS_SECRET_ACCESS_KEY = credentials('AWS_SECRET_KEY')
+        AWS_DEFAULT_REGION = "us-east-1"
+        DOCKERHUB_PASSWORD = credentials('DOCKERHUB_PASSWORD')
+        registryCredential = 'dockerhub-creds'
+
+    }
+    stages {
+        stage('Git Checkout'){
+            steps{
+                checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/pankajdevops2489/python-jenkins-terraform.git']])
+            }
+        }
+        stage('Initalizing Terraform code'){
+            steps{
+                    sh '''
+                    cd Terraform-Files
+                    terraform init
+                    '''
+            }
+        }
+        stage('Format and Validate Terraform code'){
+            steps{
+                    sh '''
+                    cd Terraform-Files
+                    terraform fmt
+                    terraform validate
+                    '''
+            }
+        }
+        stage('Terraform Apply'){
+            steps{
+                    sh '''
+                    cd Terraform-Files
+
+                    terraform apply -auto-approve
+                    '''
+                }
+        }
+        stage('Build Docker Image') {
+            steps{
+                script {
+                      dockerImage = docker.build registry + ":$BUILD_NUMBER"
+                    }
+            }
+        }
+        stage('Push Docker Image to Docker Hub') {
+            steps {
+                    script {
+                        docker.withRegistry( '', registryCredential ) {
+                        dockerImage.push()
+                        }
+                }
+            }
+        }
+        stage('Deploying Python Application') {
+            steps{
+                script{
+                    dir('python-app-chart') {
+                        sh 'aws eks update-kubeconfig --name my-eks-cluster'
+                        sh "helm upgrade --install my-python-app . --set image.tag=${BUILD_NUMBER}"
+                    }
+                }
+            }
+        }
+    }
+}
